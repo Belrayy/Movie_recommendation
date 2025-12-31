@@ -166,3 +166,126 @@ def get_rating_by_movieid_userid(request, movie_id, user_id):
         "rating": record["rating"],
         "timestamp": record["timestamp"],
     })
+
+@api_view(['POST'])
+def add_movie_to_list(request):
+    list_id = request.data.get("list_id")
+    movie_id = request.data.get("movie_id")
+
+    query = """
+    MATCH (l:List {id: $list_id})
+    MATCH (m:Movie)
+    WHERE toInteger(m.id) = $movie_id
+    MERGE (l)-[:CONTAINS]->(m)
+    """
+
+    with get_session() as session:
+        session.run(query, list_id=list_id, movie_id=int(movie_id))
+
+    return Response({"message": "Movie added to list"})
+
+@api_view(['GET'])
+def get_list_genres(request, list_id):
+    query = """
+    MATCH (l:List {id: $list_id})-[:CONTAINS]->(m:Movie)
+    UNWIND m.genres AS genre
+    RETURN genre.name AS genre, count(*) AS frequency
+    ORDER BY frequency DESC
+    """
+
+    with get_session() as session:
+        records = session.run(query, list_id=list_id).values()
+
+    return Response([
+        {"genre": r[0], "count": r[1]} for r in records
+    ])
+
+@api_view(['GET'])
+def get_list_genres(request, list_id):
+    query = """
+    MATCH (l:List {id: $list_id})-[:CONTAINS]->(m:Movie)
+    UNWIND m.genres AS genre
+    RETURN genre.name AS genre, count(*) AS frequency
+    ORDER BY frequency DESC
+    """
+
+    with get_session() as session:
+        records = session.run(query, list_id=list_id).values()
+
+    return Response([
+        {"genre": r[0], "count": r[1]} for r in records
+    ])
+
+@api_view(['GET'])
+def recommend_from_list(request, list_id):
+    query = """
+    MATCH (l:List {id: $list_id})-[:CONTAINS]->(m:Movie)
+    UNWIND m.genres AS g
+    WITH g.name AS genre, count(*) AS freq
+    ORDER BY freq DESC
+    LIMIT 1
+
+    MATCH (rec:Movie)
+    WHERE any(x IN rec.genres WHERE x.name = genre)
+      AND NOT ( (l)-[:CONTAINS]->(rec) )
+    RETURN rec.id AS id,
+           rec.original_title AS title,
+           rec.vote_average AS rating
+    ORDER BY rec.vote_average DESC
+    LIMIT 10
+    """
+
+    with get_session() as session:
+        records = session.run(query, list_id=list_id).values()
+
+    return Response([
+        {"id": r[0], "title": r[1], "rating": r[2]} for r in records
+    ])
+
+
+@api_view(['GET'])
+def recommend_weighted(request, list_id):
+    query = """
+    MATCH (l:List {id: $list_id})-[:CONTAINS]->(m:Movie)
+    UNWIND m.genres AS g
+    WITH g.name AS genre, count(*) AS weight
+
+    MATCH (rec:Movie)
+    WHERE any(x IN rec.genres WHERE x.name = genre)
+      AND NOT ( (l)-[:CONTAINS]->(rec) )
+    RETURN rec.id AS id,
+           rec.original_title AS title,
+           sum(weight) AS score,
+           rec.vote_average AS rating
+    ORDER BY score DESC, rating DESC
+    LIMIT 10
+    """
+
+    with get_session() as session:
+        records = session.run(query, list_id=list_id).values()
+
+    return Response([
+        {"id": r[0], "title": r[1], "score": r[2], "rating": r[3]} for r in records
+    ])
+
+@api_view(['GET'])
+def recommend_similar_movie(request, movie_id):
+    query = """
+    MATCH (m:Movie)
+    WHERE toInteger(m.id) = $movie_id
+    UNWIND m.genres AS g
+
+    MATCH (rec:Movie)
+    WHERE rec <> m
+      AND any(x IN rec.genres WHERE x.name = g.name)
+    RETURN rec.id AS id, rec.original_title AS title
+    ORDER BY rec.vote_average DESC
+    LIMIT 10
+    """
+
+    with get_session() as session:
+        records = session.run(query, movie_id=int(movie_id)).values()
+
+    return Response([
+        {"id": r[0], "title": r[1]} for r in records
+    ])
